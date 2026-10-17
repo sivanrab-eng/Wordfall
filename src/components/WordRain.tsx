@@ -55,7 +55,7 @@ export function WordRain({ onExit, muted, standalone = false, onGameStart, onGam
   const speed = progressRef.current.speed; setRoundSpeed(speed);
   const word = standalone ? gameWordsRef.current[r] : VOCAB[Math.floor(Math.random() * VOCAB.length)];
   if (!word) return;
-  const others = shuffle(poolRef.current.filter((w) => w !== word)).slice(0, LANES - 1);
+  const others = shuffle(poolRef.current.filter((w) => w !== word && (!standalone || w.english !== word.english))).slice(0, LANES - 1);
   const lanes = shuffle([word, ...others]); setTarget(word);
   setHits(new Set()); setMisses(new Set());
   setDrops(lanes.map((w, i) => ({ word: w, lane: i, key: `${r}-${w.hebrew}` })));
