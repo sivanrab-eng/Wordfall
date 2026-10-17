@@ -1,16 +1,39 @@
 import { VOCAB, type Word } from "./vocab";
 import simpleVocabulary from "./wordfall-vocabulary.json";
 const meanings: Record<string, { english: string; level: number }> = simpleVocabulary;
-export const WORDFALL_POOLS: readonly Word[][] = Array.from({ length: 5 }, (_, level) => VOCAB.flatMap(word => { const entry = meanings[word.hebrew]; return entry?.level === level ? [{ ...word, english: entry.english }] : []; }));
-export const WORDFALL_WORDS = WORDFALL_POOLS.flat();
+export const WORDFALL_POOLS: readonly Word[][] = Array.from({ length: 5 }, (_, level) =>
+  VOCAB.flatMap(word => { const entry = meanings[word.hebrew]; return entry?.level === level ? [{ ...word, english: entry.english }] : []; }),
+);
+// Confidence words are standalone-only; preserve the source vocabulary.
+export const EVERYDAY_WORDS: Word[] = [
+  ["בית", "a house"], ["כלב", "a dog"], ["חתול", "a cat"], ["מים", "water"], ["לחם", "bread"],
+  ["שמש", "the sun"], ["ירח", "the moon"], ["ים", "the sea"], ["עץ", "a tree"], ["פרח", "a flower"],
+  ["ספר", "a book"], ["כדור", "a ball"], ["שמח", "happy"], ["גדול", "big"], ["קטן", "small"],
+  ["לשחק", "to play"], ["לרוץ", "to run"], ["לישון", "to sleep"], ["לאכול", "to eat"], ["לשתות", "to drink"],
+].map(([hebrew = "", english = ""]) => ({ hebrew, english, root: "", exampleSentenceHebrew: "", exampleSentenceEnglish: "", synonyms: [], antonyms: [] }));
+export const WORDFALL_WORDS = [...WORDFALL_POOLS.flat(), ...EVERYDAY_WORDS];
 export const DIFFICULTY_STORAGE_KEY = "wordfall-difficulty-v1";
 export type DifficultyProgress = { level: number; wins: number };
 export const initialDifficulty = (): DifficultyProgress => ({ level: 0, wins: 0 });
 export function normalizeDifficulty(value: unknown): DifficultyProgress {
- if (!value || typeof value !== "object" || !("level" in value) || !("wins" in value)) return initialDifficulty();
- const { level, wins } = value;
- if (typeof level !== "number" || !Number.isInteger(level) || level < 0 || level >= WORDFALL_POOLS.length || typeof wins !== "number" || !Number.isInteger(wins) || wins < 0 || wins > 1) return initialDifficulty();
- return { level, wins };
+  if (!value || typeof value !== "object" || !("level" in value) || !("wins" in value)) return initialDifficulty();
+  const { level, wins } = value;
+  if (typeof level !== "number" || !Number.isInteger(level) || level < 0 || level >= WORDFALL_POOLS.length || typeof wins !== "number" || !Number.isInteger(wins) || wins < 0 || wins > 1) return initialDifficulty();
+  return { level, wins };
 }
-export function completeDifficulty(progress: DifficultyProgress, score: number): DifficultyProgress { if (score < 8 || progress.level >= WORDFALL_POOLS.length - 1) return progress; return progress.wins === 1 ? { level: progress.level + 1, wins: 0 } : { ...progress, wins: 1 }; }
+export function completeDifficulty(progress: DifficultyProgress, score: number): DifficultyProgress {
+  if (score < 8 || progress.level >= WORDFALL_POOLS.length - 1) return progress;
+  return { level: progress.level + 1, wins: 0 };
+}
 export function difficultyPool(progress: DifficultyProgress): Word[] { return WORDFALL_POOLS[progress.level] ?? WORDFALL_POOLS[0] ?? []; }
+export const HARD_MIX = [2, 3, 4, 6, 0] as const;
+export function mixedGameWords(progress: DifficultyProgress, rounds: number, shuffle: <T>(items: T[]) => T[]): Word[] {
+  const easy = shuffle([...EVERYDAY_WORDS]).slice(0, Math.min(3, rounds));
+  const richRounds = rounds - easy.length;
+  const easyLabels = new Set(EVERYDAY_WORDS.map(word => word.hebrew));
+  const hardCount = Math.min(HARD_MIX[progress.level] ?? 0, richRounds);
+  const later = WORDFALL_POOLS.slice(progress.level + 1).flat().filter(word => !easyLabels.has(word.hebrew));
+  const hard = shuffle([...later]).slice(0, hardCount);
+  const base = shuffle(difficultyPool(progress).filter(word => !easyLabels.has(word.hebrew))).slice(0, richRounds - hard.length);
+  return [...easy, ...base, ...hard];
+}
