@@ -1,0 +1,51 @@
+name: Import approved standalone Wordfall
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Export approved game only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, urllib.request
+          repo = 'sivanrab-eng/Wordfall'
+          source = 'https://raw.githubusercontent.com/sivanrab-eng/hebrew-speed-master/12c6b414fffda44c5d25213459c72edfd30ca0c6/'
+          files = ['src/components/WordRain.tsx', 'src/components/Wordfall.tsx', 'src/lib/vocab.ts', 'src/lib/wordfall-difficulty.ts', 'src/lib/wordfall-vocabulary.json', 'src/lib/word-rain-speed.ts', 'src/lib/wordfall-analytics.ts', 'src/lib/wordfall-config.ts', 'src/test/wordfall.test.tsx', 'src/test/wordfall-difficulty.test.ts', 'src/test/speech.test.ts', 'src/test/vocab.test.ts', 'src/test/word-rain-speed.test.ts']
+          def api(path, data=None, method=None):
+            request = urllib.request.Request('https://api.github.com/repos/' + repo + path, data=None if data is None else json.dumps(data).encode(), method=method, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'})
+            with urllib.request.urlopen(request) as response:
+              raw = response.read()
+              return json.loads(raw) if raw else None
+          head = api('/git/ref/heads/main')['object']['sha']
+          base = api('/git/commits/' + head)['tree']['sha']
+          entries = []
+          for path in files:
+            content = urllib.request.urlopen(source + path).read()
+            if path == 'src/lib/wordfall-config.ts':
+              content = content.replace(b'https://sivanrab-eng.github.io/hebrew-speed-master/', b'https://sivanrab-eng.github.io/Wordfall/')
+            blob = api('/git/blobs', {'content': base64.b64encode(content).decode(), 'encoding': 'base64'})
+            entries.append({'path':path, 'mode':'100644', 'type':'blob', 'sha':blob['sha']})
+          rules = '''# Standalone Wordfall
+          - Keep the root route exclusively for the falling-word game; do not include other games or backend clients.
+          - Keep variant-specific pace in the pure speed helper and apply timing changes at round boundaries so falling animations and timers stay synchronized.
+          - Keep installation manifest-only and scoped to the hosting base path to avoid offline preview effects.
+          - Keep analytics browser-only, optional and aggregate without player identifiers; use the repository variable for the measurement ID.
+          - Preserve shared source vocabulary and keep standalone meanings and tier tags in a complete overlay to prevent ambiguity and arcade changes.
+          - Keep tier progression, repetition batches and introduced-word history in the mounted game rather than device storage so fresh visits start at the initial tier.
+          - Gate falling timers behind introductions and apply eligible tier advancement only on explicit player choice so confidence support never alters arcade play.
+          - Sequence introduction speech through cancellable Hebrew-then-English end/error callbacks with a fallback and clear stale timers before another reading so English cannot be lost or overlap.
+          '''
+          entries.append({'path':'AGENTS.md','mode':'100644','type':'blob','content':rules})
+          entries.append({'path':'.github/workflows/import-approved.yml','mode':'100644','type':'blob','sha':None})
+          tree = api('/git/trees', {'base_tree':base,'tree':entries})
+          commit = api('/git/commits', {'message':'Publish approved gentle Wordfall start and sequenced speech', 'tree':tree['sha'], 'parents':[head]})
+          api('/git/refs/heads/main', {'sha':commit['sha'],'force':False}, 'PATCH')
+          print('Exported standalone files:', len(files), 'commit:', commit['sha'])
+          api('/actions/workflows/deploy.yml/dispatches', {'ref':'main'})
+          PY
