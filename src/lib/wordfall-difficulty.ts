@@ -44,11 +44,22 @@ export function difficultyPool(progress: DifficultyProgress): Word[] {
   return WORDFALL_POOLS[progress.level] ?? WORDFALL_POOLS[0] ?? [];
 }
 
-// Harder words borrowed from later tiers per game, growing by tier (2 → 3 → 4 → 6; last tier is all hard).
-export const HARD_MIX = [0, 3, 4, 6, 0] as const;
+// Regular play is rich-only; practice retains its own confidence mix and replay rules.
+export function regularGameWords(progress: DifficultyProgress, previous: Word[], rounds: number, shuffle: <T>(items: T[]) => T[]): Word[] {
+  const everydayLabels = new Set(EVERYDAY_WORDS.map(word => word.hebrew));
+  const pool = difficultyPool(progress).filter(word => !everydayLabels.has(word.hebrew));
+  const poolLabels = new Set(pool.map(word => word.hebrew));
+  if (previous.length !== rounds || previous.some(word => !poolLabels.has(word.hebrew))) return shuffle([...pool]).slice(0, rounds);
+  const previousLabels = new Set(previous.map(word => word.hebrew));
+  const replacements = shuffle(pool.filter(word => !previousLabels.has(word.hebrew))).slice(0, Math.min(5, rounds));
+  return shuffle([...shuffle([...previous]).slice(0, rounds - replacements.length), ...replacements]);
+}
+
+// Later-tier borrowing stays within the three rich slots; the last tier uses its own pool.
+export const HARD_MIX = [0, 3, 3, 3, 0] as const;
 
 export function mixedGameWords(progress: DifficultyProgress, rounds: number, shuffle: <T>(items: T[]) => T[]): Word[] {
-  const easy = shuffle([...EVERYDAY_WORDS]).slice(0, Math.min(progress.level === 0 ? 7 : 3, rounds));
+  const easy = shuffle([...EVERYDAY_WORDS]).slice(0, Math.min(7, rounds));
   const richRounds = rounds - easy.length;
   const easyLabels = new Set(EVERYDAY_WORDS.map(word => word.hebrew));
   const hardCount = Math.min(HARD_MIX[progress.level] ?? 0, richRounds);
@@ -58,10 +69,51 @@ export function mixedGameWords(progress: DifficultyProgress, rounds: number, shu
   return [...easy, ...base, ...hard];
 }
 
-export function repeatedGameWords(progress: DifficultyProgress, previous: Word[], completedGames: number, rounds: number, shuffle: <T>(items: T[]) => T[]): Word[] {
-  return previous.length === rounds && completedGames % 3 !== 0
-    ? [...previous]
-    : mixedGameWords(progress, rounds, shuffle);
+export function repeatedGameWords(progress: DifficultyProgress, previous: Word[], _completedGames: number, rounds: number, shuffle: <T>(items: T[]) => T[]): Word[] {
+  if (previous.length !== rounds) return mixedGameWords(progress, rounds, shuffle);
+  const previousLabels = new Set(previous.map(word => word.hebrew));
+  const easyLabels = new Set(EVERYDAY_WORDS.map(word => word.hebrew));
+  const easy = shuffle(previous.filter(word => easyLabels.has(word.hebrew)));
+  const rich = shuffle(previous.filter(word => !easyLabels.has(word.hebrew)));
+  const easyCount = Math.min(progress.level === 0 ? 4 : 3, easy.length);
+  const richCount = Math.min(progress.level === 0 ? 1 : 2, rich.length);
+  const newEasy = shuffle(EVERYDAY_WORDS.filter(word => !previousLabels.has(word.hebrew))).slice(0, easyCount);
+  const baseLabels = new Set(difficultyPool(progress).map(word => word.hebrew));
+  const later = WORDFALL_POOLS.slice(progress.level + 1).flat();
+  // Replace each rich word within its own difficulty category, preserving hard mix.
+  const newRich = rich.slice(0, richCount).map(old => {
+    const pool = baseLabels.has(old.hebrew) ? difficultyPool(progress) : later;
+    const replacement = shuffle(pool.filter(word => !previousLabels.has(word.hebrew) && !easyLabels.has(word.hebrew)))[0];
+    if (!replacement) return old;
+    previousLabels.add(replacement.hebrew);
+    return replacement;
+  });
+  return [...easy.slice(easyCount), ...newEasy, ...rich.slice(richCount), ...newRich];
+}
+
+// Randomize each category, then scatter the smaller category between the larger
+// one. Replays retain the category mix, not a rich-word cluster.
+export function interleavedGameWords(words: Word[], shuffle: <T>(items: T[]) => T[]): Word[] {
+  const everyday = new Set(EVERYDAY_WORDS.map(word => word.hebrew));
+  const easy = shuffle(words.filter(word => everyday.has(word.hebrew)));
+  const rich = shuffle(words.filter(word => !everyday.has(word.hebrew)));
+  const minority = easy.length < rich.length ? easy : rich;
+  const majority = easy.length < rich.length ? rich : easy;
+  if (!minority.length) return majority;
+  const gaps: number[] = Array.from({ length: minority.length + 1 }, (_, i) => i > 0 && i < minority.length ? 1 : 0);
+  const remaining = majority.length - minority.length + 1;
+  const gapOrder = shuffle(gaps.map((_, i) => i));
+  for (let i = 0; i < remaining; i++) {
+    const gap = gapOrder[i % gapOrder.length];
+    if (gap !== undefined) gaps[gap] = (gaps[gap] ?? 0) + 1;
+  }
+  let cursor = 0;
+  return gaps.flatMap((size, i) => {
+    const group = majority.slice(cursor, cursor + size);
+    cursor += size;
+    const word = minority[i];
+    return word ? [...group, word] : group;
+  });
 }
 
 export const needsIntroduction = (word: Word, introduced: Set<string>) =>
